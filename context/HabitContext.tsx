@@ -46,6 +46,7 @@ interface HabitContextType {
   getCompletionsForDate: (date: string) => HabitCompletion[];
   getCurrentStreak: (habitId: string) => number;
   getCompletionRate: (habitId: string, days: number) => number;
+  getGoalProgress: (habitId: string) => { completed: number; goal: number };
   isHabitCompletedForDate: (habitId: string, date: string) => boolean;
   exportData: () => Promise<string>;
   importData: (jsonData: string) => Promise<void>;
@@ -171,31 +172,67 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // Toggle completion status for a habit on a specific date
-  const toggleCompletion = (habitId: string, date: string) => {
-    const existingCompletion = completions.find(
-      (c) => c.habitId === habitId && c.date === date
-    );
+  const toggleCompletion = useCallback(
+    (habitId: string, date: string) => {
+      // Normalize the date string to ensure consistent format with local time
+      const normalizedDate = formatDate(new Date(date));
 
-    if (existingCompletion) {
-      // Toggle existing completion
-      setCompletions((prev) =>
-        prev.map((c) =>
-          c.id === existingCompletion.id ? { ...c, completed: !c.completed } : c
-        )
+      // For debugging
+      console.log(
+        `toggleCompletion - date: ${date}, normalizedDate: ${normalizedDate}`
       );
-    } else {
-      // Create new completion
-      setCompletions((prev) => [
-        ...prev,
-        {
+
+      // Find existing completion in O(1) time with a direct lookup
+      const existingCompletion = completions.find(
+        (c) => c.habitId === habitId && c.date === normalizedDate
+      );
+
+      if (existingCompletion) {
+        // Toggle existing completion - use a faster implementation
+        const updatedCompletions = [...completions]; // Create a new array
+        const idx = updatedCompletions.findIndex(
+          (c) => c.id === existingCompletion.id
+        );
+        // Update directly for better performance
+        if (idx !== -1) {
+          updatedCompletions[idx] = {
+            ...existingCompletion,
+            completed: !existingCompletion.completed,
+          };
+          // Update state immediately for UI responsiveness
+          setCompletions(updatedCompletions);
+          // Save asynchronously to avoid UI blocking
+          setTimeout(() => {
+            AsyncStorage.setItem(
+              'completions',
+              JSON.stringify(updatedCompletions)
+            ).catch((err) => console.error('Failed to save completions', err));
+          }, 0);
+        }
+      } else {
+        // Create new completion
+        const newCompletion = {
           id: uuid.v4() as string,
           habitId,
-          date,
+          date: normalizedDate,
           completed: true,
-        },
-      ]);
-    }
-  };
+        };
+
+        // Update state immediately for UI responsiveness
+        const updatedCompletions = [...completions, newCompletion];
+        setCompletions(updatedCompletions);
+
+        // Save asynchronously to avoid UI blocking
+        setTimeout(() => {
+          AsyncStorage.setItem(
+            'completions',
+            JSON.stringify(updatedCompletions)
+          ).catch((err) => console.error('Failed to save completions', err));
+        }, 0);
+      }
+    },
+    [completions]
+  );
 
   // Get completions for a habit within a date range
   const getCompletionsForHabit = (
@@ -220,12 +257,26 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // Check if a habit is completed for a specific date
-  const isHabitCompletedForDate = (habitId: string, date: string) => {
-    const completion = completions.find(
-      (c) => c.habitId === habitId && c.date === date
-    );
-    return completion?.completed ?? false;
-  };
+  const isHabitCompletedForDate = useCallback(
+    (habitId: string, date: string) => {
+      // Normalize the date string to ensure consistent format
+      const normalizedDate = formatDate(new Date(date));
+
+      // Debug log
+      //console.log(`isHabitCompletedForDate - date: ${date}, normalizedDate: ${normalizedDate}`);
+
+      // Use direct array lookups for better performance
+      const result = !!completions.find(
+        (c) => c.habitId === habitId && c.date === normalizedDate && c.completed
+      );
+
+      // Debug log
+      //console.log(`isHabitCompletedForDate - habitId: ${habitId}, match: ${result}`);
+
+      return result;
+    },
+    [completions]
+  );
 
   // Get current streak for a habit
   const getCurrentStreak = (habitId: string) => {
@@ -233,14 +284,28 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!habit) return 0;
 
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     let streak = 0;
     let currentDate = new Date(today);
 
-    while (true) {
-      const dateString = formatDate(currentDate);
-      const isCompleted = isHabitCompletedForDate(habitId, dateString);
+    // Check today first
+    const todayStr = formatDate(currentDate);
+    const isTodayCompleted = isHabitCompletedForDate(habitId, todayStr);
 
-      if (!isCompleted) break;
+    // If today is not completed, check if yesterday was completed to start the streak
+    if (!isTodayCompleted) {
+      currentDate.setDate(currentDate.getDate() - 1);
+    }
+
+    // Now count consecutive days
+    while (true) {
+      const dateStr = formatDate(currentDate);
+      const isCompleted = isHabitCompletedForDate(habitId, dateStr);
+
+      if (!isCompleted) {
+        break;
+      }
 
       streak++;
       currentDate.setDate(currentDate.getDate() - 1);
@@ -268,6 +333,22 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     return days > 0 ? completedDays / days : 0;
+  };
+
+  // Get goal progress for a habit (completed days out of goal)
+  const getGoalProgress = (habitId: string) => {
+    const habit = habits.find((h) => h.id === habitId);
+    if (!habit) return { completed: 0, goal: 0 };
+
+    // Count all days where the habit was completed
+    const completedDays = completions.filter(
+      (c) => c.habitId === habitId && c.completed
+    ).length;
+
+    return {
+      completed: completedDays,
+      goal: habit.goalCount,
+    };
   };
 
   // Export data as JSON
@@ -308,6 +389,7 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({
         getCompletionsForDate,
         getCurrentStreak,
         getCompletionRate,
+        getGoalProgress,
         isHabitCompletedForDate,
         exportData,
         importData,

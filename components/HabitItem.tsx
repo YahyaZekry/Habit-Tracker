@@ -1,5 +1,11 @@
 import React, { useRef, useEffect, memo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Dimensions,
+} from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -50,15 +56,15 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
   onEdit,
   onDelete,
   showActions = false,
-  isDraggable = false, // Default to not draggable
-  initialY = 0, // Default initialY
-  index = 0, // Default index
+  isDraggable = false,
+  initialY = 0,
+  index = 0,
   draggingIndex: draggingIndexProp,
   draggingCurrentY: draggingCurrentYProp,
-  onDragEnd: onDragEndProp, // Rename
-  itemHeight = 80, // Default item height
-  itemSpacing = 8, // Default item spacing
-  totalItems = 1, // Default totalItems
+  onDragEnd: onDragEndProp,
+  itemHeight = 80,
+  itemSpacing = 8,
+  totalItems = 1,
 }) => {
   // Local shared value if not provided (for non-draggable items)
   const localDraggingIndex = useSharedValue(-1);
@@ -82,6 +88,14 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
   // Initialize translateY. If not draggable, it will effectively be 0 or its static position.
   // If draggable, initialY prop is expected.
   const translateY = useSharedValue(isDraggable ? initialY : 0);
+
+  const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+  // Ensure consistent date handling using local time
+  const normalizedDate = formatDate(new Date(date));
+
+  // For debugging
+  console.log(`HabitItem - date: ${date}, normalizedDate: ${normalizedDate}`);
 
   // Update translateY if initialY changes (e.g., due to reordering by other items)
   // Only applicable if draggable
@@ -162,36 +176,64 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
     return null;
   }
 
-  const isCompleted = isHabitCompletedForDate(habitId, date);
+  // Get completion state directly from context without any transformations
+  const isCompleted = isHabitCompletedForDate(habitId, normalizedDate);
   const [showConfetti, setShowConfetti] = useState(false);
   const streak = getCurrentStreak(habitId);
 
   // Get today's completion count
   const todayCompletions = completions.filter(
-    (c) => c.habitId === habitId && c.date === date && c.completed
+    (c) => c.habitId === habitId && c.date === normalizedDate && c.completed
   ).length;
   const goalReached = todayCompletions >= habit.goalCount;
   const goalExceeded = todayCompletions > habit.goalCount;
 
+  const isToday = normalizedDate === formatDate(new Date());
+  const showCheckbox = !isDraggable && date;
+
   const handleToggle = () => {
-    scaleAnim.value = withSpring(0.95, SPRING_CONFIG, () => {
-      scaleAnim.value = withSpring(1, SPRING_CONFIG);
-    });
+    // Apply immediate visual feedback
+    const newCompletedState = !isCompleted;
+
+    // Fast, responsive animation
+    scaleAnim.value = withSpring(
+      0.95,
+      {
+        damping: 20,
+        stiffness: 300,
+        mass: 0.5,
+        overshootClamping: false,
+        restSpeedThreshold: 0.1,
+      },
+      () => {
+        scaleAnim.value = withSpring(1, {
+          damping: 20,
+          stiffness: 300,
+          mass: 0.5,
+          overshootClamping: false,
+          restSpeedThreshold: 0.1,
+        });
+      }
+    );
+
+    // Add haptic feedback for better user experience
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // Get completions before toggle
     const completionsBeforeToggle = completions.filter(
-      (c) => c.habitId === habitId && c.date === date && c.completed
+      (c) => c.habitId === habitId && c.date === normalizedDate && c.completed
     ).length;
 
-    // Toggle completion
-    toggleCompletion(habitId, date);
+    // Toggle completion with normalized date - do this immediately
+    toggleCompletion(habitId, normalizedDate);
 
     // Check if this completion would reach or exceed the goal
     const newCompletions = completionsBeforeToggle + (isCompleted ? -1 : 1);
-    if (newCompletions >= habit.goalCount) {
+    if (newCompletedState && newCompletions >= habit.goalCount) {
+      // Only trigger animation when checking (not unchecking) and goal is reached
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 3000);
+      setTimeout(() => setShowConfetti(false), 2000); // Reduced from 5000ms to 2000ms
     }
   };
 
@@ -278,20 +320,22 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
         !isDraggable && styles.nonDraggableContainer,
       ]}
     >
-      {/* Content of the habit item */}
-      <TouchableOpacity
-        style={styles.checkboxContainer}
-        onPress={handleToggle}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.checkbox, { borderColor: habit.color }]}>
-          {isCompleted ? (
-            <Check size={16} color="#FFFFFF" style={styles.checkIcon} />
-          ) : (
-            <Circle size={16} color={habit.color} style={styles.circleIcon} />
-          )}
-        </View>
-      </TouchableOpacity>
+      {/* Only show checkbox if NOT in the habits screen (where isDraggable is true) */}
+      {!isDraggable && date && (
+        <TouchableOpacity
+          style={styles.checkboxContainer}
+          onPress={handleToggle}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.checkbox, { borderColor: habit.color }]}>
+            {isCompleted ? (
+              <Check size={16} color="#FFFFFF" style={styles.checkIcon} />
+            ) : (
+              <Circle size={16} color={habit.color} style={styles.circleIcon} />
+            )}
+          </View>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.contentContainer}>
         <Text style={[styles.title, { color: theme.text.primary }]}>
@@ -317,16 +361,6 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
             </Text>
           )}
         </View>
-
-        {showConfetti && (
-          <ConfettiCannon
-            count={50}
-            origin={{ x: 0, y: 0 }}
-            autoStart={true}
-            fadeOut={true}
-            colors={[COLORS.primary.main, COLORS.success.main, '#FFD700']}
-          />
-        )}
       </View>
 
       {showActions && (
@@ -358,15 +392,58 @@ const HabitItemInner: React.FC<HabitItemProps> = ({
   // Conditionally wrap itemView with PanGestureHandler
   if (isDraggable && gestureHandler) {
     return (
-      <PanGestureHandler onGestureEvent={gestureHandler}>
-        {itemView}
-      </PanGestureHandler>
+      <>
+        <PanGestureHandler onGestureEvent={gestureHandler}>
+          {itemView}
+        </PanGestureHandler>
+        {showConfetti && (
+          <View style={styles.fullScreenConfetti}>
+            <ConfettiCannon
+              count={200}
+              origin={{ x: screenWidth / 2, y: screenHeight }}
+              autoStart={true}
+              fadeOut={true}
+              colors={[
+                COLORS.primary.main,
+                COLORS.success.main,
+                '#FFD700',
+                '#FF69B4',
+                '#00CED1',
+              ]}
+              explosionSpeed={350}
+              fallSpeed={3000}
+            />
+          </View>
+        )}
+      </>
     );
   }
 
   // If not draggable, return itemView directly
-  // If not draggable, return itemView directly
-  return itemView;
+  return (
+    <>
+      {itemView}
+      {showConfetti && (
+        <View style={styles.fullScreenConfetti}>
+          <ConfettiCannon
+            count={200}
+            origin={{ x: screenWidth / 2, y: screenHeight }}
+            autoStart={true}
+            fadeOut={true}
+            colors={[
+              COLORS.primary.main,
+              COLORS.success.main,
+              '#FFD700',
+              '#FF69B4',
+              '#00CED1',
+            ]}
+            explosionSpeed={350}
+            fallSpeed={3000}
+          />
+        </View>
+      )}
+    </>
+  );
 };
 
 // Memoize the component
@@ -473,5 +550,14 @@ const styles = StyleSheet.create({
   actionButton: {
     padding: 8,
     marginLeft: 8,
+  },
+  fullScreenConfetti: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+    zIndex: 9999,
   },
 });

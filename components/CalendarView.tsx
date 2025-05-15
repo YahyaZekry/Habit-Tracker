@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -34,14 +34,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [currentMonth, setCurrentMonth] = useState(new Date(selectedDate));
   const { currentTheme: theme } = useAppTheme();
   const {
-    isHabitCompletedForDate,
+    isHabitCompletedForDate: checkHabitCompletion,
     habits,
     getCompletionRate,
     getCurrentStreak,
   } = useHabits();
 
   const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // Use local time midnight
+  today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -67,12 +68,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const isDateInteractive = useCallback(
     (date: Date) => {
       const normalizedDate = new Date(date);
-      normalizedDate.setUTCHours(0, 0, 0, 0);
-      return (
-        isSameDay(normalizedDate, today) || isSameDay(normalizedDate, tomorrow)
-      );
+      // Use local time midnight
+      normalizedDate.setHours(0, 0, 0, 0);
+      // Only allow interaction with today or past dates
+      return normalizedDate <= today;
     },
-    [today, tomorrow]
+    [today]
   );
 
   const handleDateSelect = useCallback(
@@ -89,22 +90,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const renderDay = useCallback(
     (date: Date) => {
       const normalizedDate = new Date(date);
-      normalizedDate.setUTCHours(0, 0, 0, 0);
+      // Use local time midnight
+      normalizedDate.setHours(0, 0, 0, 0);
 
       const isSelected = isSameDay(date, selectedDate);
       const isCurrentMonth = isSameMonth(date, currentMonth);
       const isToday = isSameDay(date, today);
-      const isTomorrow = isSameDay(date, tomorrow);
+      // Consider all dates after today as future
+      const isFuture = normalizedDate > today;
       const isPast = normalizedDate < today;
-      const isFuture = normalizedDate > tomorrow;
 
-      // Check if the habit is completed on this date
-      const dateStr = formatDate(date);
+      // Always use normalized date string and force re-evaluation with completions dependency
+      const dateStr = formatDate(normalizedDate);
       const isCompleted = habitId
-        ? isHabitCompletedForDate(habitId, dateStr)
+        ? checkHabitCompletion(habitId, dateStr)
         : false;
 
-      const interactive = isDateInteractive(date);
+      const interactive = !isFuture && isCurrentMonth;
 
       return (
         <TouchableOpacity
@@ -123,9 +125,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               { backgroundColor: COLORS.primary.main },
             ],
             !interactive && styles.disabledDay,
+            isFuture && styles.futureDay,
           ]}
           onPress={() => handleDateSelect(date)}
-          disabled={!interactive || !isCurrentMonth}
+          disabled={!interactive}
         >
           <Text
             style={[
@@ -141,6 +144,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 styles.disabledDayText,
                 { color: theme.text.disabled },
               ],
+              isFuture && styles.futureDayText,
             ]}
           >
             {date.getDate()}
@@ -178,11 +182,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       currentMonth,
       selectedDate,
       habitId,
-      isHabitCompletedForDate,
+      checkHabitCompletion,
       handleDateSelect,
       theme,
       today,
-      tomorrow,
     ]
   );
 
@@ -370,5 +373,12 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 18,
     fontWeight: '600',
+  },
+  futureDay: {
+    opacity: 0.5,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  futureDayText: {
+    color: '#999999',
   },
 });
