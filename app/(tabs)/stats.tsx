@@ -18,7 +18,8 @@ import { EmptyState } from '../../components/EmptyState';
 type StatsTab = 'calendar' | 'progress';
 
 export default function StatsScreen() {
-  const { habits, getCompletionRate, getCurrentStreak } = useHabits();
+  const { habits, getCompletionRate, getCurrentStreak, getGoalProgress } =
+    useHabits();
   const { currentTheme: theme, effectiveTheme } = useAppTheme();
   const [activeTab, setActiveTab] = useState<StatsTab>('calendar');
   const [selectedHabitId, setSelectedHabitId] = useState<string | undefined>(
@@ -275,13 +276,37 @@ export default function StatsScreen() {
               >
                 Goal Progress
               </Text>
-              <View style={styles.goalInfo}>
-                <Text
-                  style={[styles.goalText, { color: theme.text.secondary }]}
-                >
-                  {selectedHabit.goalCount} times per {selectedHabit.goalPeriod}
-                </Text>
-              </View>
+              {selectedHabitId && (
+                <>
+                  {(() => {
+                    const progress = getGoalProgress(selectedHabitId);
+                    const progressRatio =
+                      progress.goal > 0
+                        ? progress.completed / progress.goal
+                        : 0;
+                    return (
+                      <>
+                        <ProgressBar
+                          progress={progressRatio}
+                          height={10}
+                          color={selectedHabit.color}
+                          showPercentage={false}
+                        />
+                        <View style={styles.goalInfo}>
+                          <Text
+                            style={[
+                              styles.goalText,
+                              { color: theme.text.secondary },
+                            ]}
+                          >
+                            {progress.completed} out of {progress.goal} days
+                          </Text>
+                        </View>
+                      </>
+                    );
+                  })()}
+                </>
+              )}
             </View>
           </View>
         )}
